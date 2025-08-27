@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokémon Battle (Web Port)</title>
+<link rel="preconnect" href="https://pyscript.net" />
+<link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+<script defer src="https://pyscript.net/latest/pyscript.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu; background:#0b0c10; color:#e5e7eb; }
+  header { display:flex; align-items:center; justify-content:center; padding:12px 16px; border-bottom:1px solid #1f2937; background:#111318; position:sticky; top:0; z-index:10; }
+  header h1 { font-size: 20px; margin:0; letter-spacing:.4px; }
+  .app { max-width: 980px; margin: 0 auto; padding: 16px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .card { background:#12151c; border:1px solid #1f2937; border-radius:14px; padding:14px; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .label { font-size:12px; color:#9ca3af; }
+  input, select { background:#0f1218; border:1px solid #2a3340; color:#e5e7eb; padding:8px 10px; border-radius:10px; outline:none; }
+  button { background:#1f2937; border:1px solid #2b3647; color:#e5e7eb; border-radius:12px; padding:10px 12px; cursor:pointer; font-weight:600; }
+  button:hover { background:#263244; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .battle { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:center; }
+  .sprite-wrap { background:radial-gradient(400px 220px at 50% 65%, #1a2230, #0b0c10 60%); border:1px solid #202a38; border-radius:14px; padding:12px; display:grid; grid-template-rows:auto 1fr auto; justify-items:center; min-height:260px; }
+  .namebar { width:100%; display:flex; align-items:center; justify-content:space-between; font-weight:700; }
+  .hpbar { width:100%; height:10px; background:#253040; border-radius:999px; overflow:hidden; border:1px solid #334156; }
+  .hpbar > span { display:block; height:100%; width:100%; background:#22c55e; }
+  .sprite { image-rendering: pixelated; max-height:180px; object-fit:contain; }
+  .textbox { min-height:96px; background:#0f1218; border:1px solid #253040; border-radius:12px; padding:10px; font-size:14px; line-height:1.35; }
+  .moves { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .moves button { padding:12px; }
+  .footer { display:flex; justify-content:space-between; gap:8px; }
+  .muted { color:#9ca3af; font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>Pokémon Battle — Web Edition</h1></header>
+<div class="app">
+  <div class="grid">
+    <div class="card">
+      <div class="row">
+        <div class="label">Your Pokémon</div>
+      </div>
+      <div class="row" style="gap:12px; margin-top:6px;">
+        <input id="userName" list="pokedex_list" placeholder="e.g., pikachu" style="flex:1;">
+        <button id="pokedexBtn">See Pokédex</button>
+      </div>
+      <div class="row" style="gap:8px; margin-top:10px;">
+        <button id="lockBtn">Lock In</button>
+        <button id="restartBtn" disabled>Restart</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <div class="label">CPU Pokémon</div>
+      </div>
+      <div class="row" style="gap:12px; margin-top:6px;">
+        <input id="cpuName" list="pokedex_list" placeholder="e.g., bulbasaur" style="flex:1;">
+        <button id="beginBtn" disabled>Begin Battle</button>
+      </div>
+      <div class="row" style="gap:8px; margin-top:10px;">
+        <button id="runBtn" disabled>Run</button>
+      </div>
+    </div>
+  </div>
+
+  <datalist id="pokedex_list"></datalist>
+
+  <div class="card" style="margin-top:16px;">
+    <div class="battle">
+      <div class="sprite-wrap">
+        <div class="namebar"><span id="userLabel">Your Pokémon</span><span class="muted" id="userHpText">HP —</span></div>
+        <img id="userSprite" class="sprite" src="Sprites/white.gif" alt="user sprite">
+        <div class="hpbar"><span id="userHpBar" style="width:0%"></span></div>
+      </div>
+      <div class="sprite-wrap">
+        <div class="namebar"><span id="cpuLabel">CPU Pokémon</span><span class="muted" id="cpuHpText">HP —</span></div>
+        <img id="cpuSprite" class="sprite" src="Sprites/white.gif" alt="cpu sprite">
+        <div class="hpbar"><span id="cpuHpBar" style="width:0%"></span></div>
+      </div>
+    </div>
+    <div style="margin-top:12px;" class="textbox" id="log"></div>
+    <div class="moves" style="margin-top:10px;">
+      <button id="move1" disabled>Move 1</button>
+      <button id="move2" disabled>Move 2</button>
+      <button id="move3" disabled>Move 3</button>
+      <button id="move4" disabled>Move 4</button>
+    </div>
+  </div>
+
+  <p class="muted" style="margin-top:8px;">Based on the original Tkinter project. This port runs fully in your browser using PyScript.</p>
+</div>
+
+<py-script>
+import asyncio, csv, math, random, re
+from js import document, console, fetch, Uint8Array
+from pyodide.ffi import create_proxy
+
+POKEDEX_CSV = "Kanto Pokemon Spreadsheet.csv"
+MOVES_CSV = "Pokemon Moves.csv"
+TYPES_CSV = "Type Advantages.csv"
+
+def slug(name:str)->str:
+    return name.strip().lower().replace("♀","f").replace("♂","m").replace("'", "").replace(".", "").replace(" ", "")
+
+def sprite_path(name:str)->str:
+    fn = f"Sprites/{slug(name)}.gif"
+    return fn
+
+async def fetch_csv(path):
+    res = await fetch(path)
+    if not res.ok:
+        raise Exception(f"Failed to load {path}")
+    text = await res.text()
+    rows = []
+    rdr = csv.reader(text.splitlines())
+    rows = list(rdr)
+    return rows
+
+class Move:
+    def __init__(self, row_map):
+        self.name = row_map.get("Name").strip()
+        self.effect = row_map.get("Effect", "").strip()
+        self.type = row_map.get("Type").strip()
+        self.kind = row_map.get("Kind").strip()  # Physical / Special / Status
+        try:
+            self.power = int(row_map.get("Power") or 0)
+        except:
+            self.power = 0
+        try:
+            self.accuracy = int(row_map.get("Accuracy") or 100)
+        except:
+            self.accuracy = 100
+        try:
+            self.pp = int(row_map.get("PP") or 0)
+        except:
+            self.pp = 0
+
+class Pokemon:
+    def __init__(self, row_map):
+        self.name = row_map["Pokemon"].strip()
+        self.type1 = (row_map.get("Type I") or "").strip()
+        self.type2 = (row_map.get("Type II") or "").strip()
+        self.max_hp = int(row_map["HP"] or 1)
+        self.atk = int(row_map["Atk"] or 1)
+        self.defense = int(row_map["Def"] or 1)
+        self.spa = int(row_map["SpA"] or 1)
+        self.spd = int(row_map["SpD"] or 1)
+        self.spe = int(row_map["Spe"] or 1)
+        self.moves = [x for x in [row_map.get("Move 1"), row_map.get("Move 2"), row_map.get("Move 3"), row_map.get("Move 4")] if x and x.strip()]
+        self.cur_hp = self.max_hp
+
+class TypeChart:
+    def __init__(self, rows):
+        # rows columns: Key, Attack Type, Defense Type, Multiplier
+        self.mult = {}
+        for r in rows[1:]:
+            atk, dfn, mul = r[1].strip(), r[2].strip(), r[3].strip()
+            try:
+                m = float(mul)
+            except:
+                m = 1.0
+            self.mult[(atk, dfn)] = m
+    def eff(self, move_type, def_types):
+        m = 1.0
+        for dt in def_types:
+            if not dt: continue
+            m *= self.mult.get((move_type, dt), 1.0)
+        return m
+
+class DB:
+    def __init__(self):
+        self.poke = {}  # name -> Pokemon row map
+        self.moves = {} # name -> Move
+        self.types = None
+
+    async def load(self):
+        # Load CSVs
+        p_rows = await fetch_csv(POKEDEX_CSV)
+        m_rows = await fetch_csv(MOVES_CSV)
+        t_rows = await fetch_csv(TYPES_CSV)
+        # Normalize headers
+        def header_map(headers):
+            clean = [h.strip().replace('#','Num').replace('Name   ','Name').replace('PP   ','PP').strip() for h in headers]
+            return clean
+        # Pokedex
+        p_headers = header_map(p_rows[0])
+        for r in p_rows[1:]:
+            row = {p_headers[i]: (r[i] if i < len(r) else "").strip() for i in range(len(p_headers))}
+            name = row.get("Pokemon","").strip()
+            if name:
+                self.poke[name.lower()] = row
+        # Moves
+        m_headers = header_map(m_rows[0])
+        for r in m_rows[1:]:
+            row = {m_headers[i]: (r[i] if i < len(r) else "").strip() for i in range(len(m_headers))}
+            n = row.get("Name","").strip()
+            if n:
+                self.moves[n.lower()] = row
+        # Types
+        self.types = TypeChart(t_rows)
+
+db = DB()
+
+class Battle:
+    def __init__(self, pkm_user:Pokemon, pkm_cpu:Pokemon):
+        self.user = pkm_user
+        self.cpu = pkm_cpu
+        self.turn = 1
+        self.log_lines = []
+
+    def addlog(self, s): 
+        self.log_lines.append(s)
+        document.getElementById('log').innerText = "\n".join(self.log_lines[-8:])
+
+    def living(self, mon): return mon.cur_hp > 0
+
+    def calc_damage(self, attacker:Pokemon, defender:Pokemon, move:Move):
+        if move.power == 0:
+            return 0
+        level = 50
+        # Choose offensive/defensive stats by move.kind
+        if move.kind.lower().startswith("phys"):
+            atk, dfn = attacker.atk, defender.defense
+        else:
+            atk, dfn = attacker.spa, defender.spd
+        base = (((2*level/5 + 2) * move.power * atk / max(1, dfn)) / 50) + 2
+        # STAB
+        stab = 1.5 if move.type in [attacker.type1, attacker.type2] else 1.0
+        # Type effectiveness
+        eff = db.types.eff(move.type, [defender.type1, defender.type2])
+        # Random factor
+        rnd = random.uniform(0.85, 1.0)
+        dmg = int(base * stab * eff * rnd)
+        return max(1, dmg)  # always at least 1
+
+    def use_move(self, attacker:Pokemon, defender:Pokemon, move_name:str):
+        mvrow = db.moves.get(move_name.lower())
+        if not mvrow:
+            self.addlog(f"{attacker.name} tried to use {move_name}, but it failed!")
+            return
+        mv = Move(mvrow)
+        # Accuracy check
+        if random.randint(1, 100) > mv.accuracy:
+            self.addlog(f"{attacker.name}'s {mv.name} missed!")
+            return
+        dmg = self.calc_damage(attacker, defender, mv)
+        defender.cur_hp = max(0, defender.cur_hp - dmg)
+        eff = db.types.eff(mv.type, [defender.type1, defender.type2])
+        eff_txt = ""
+        if eff >= 2.0: eff_txt = " It's super effective!"
+        elif 0 < eff < 1.0: eff_txt = " It's not very effective..."
+        elif eff == 0: eff_txt = " It had no effect."
+        self.addlog(f"{attacker.name} used {mv.name}! It dealt {dmg} damage.{eff_txt}")
+        update_bars()
+
+def update_bars():
+    # Update HP text + bar
+    for prefix, mon in [('user', state.user_mon), ('cpu', state.cpu_mon)]:
+        if not mon: 
+            document.getElementById(prefix+'HpText').innerText = "HP —"
+            document.getElementById(prefix+'HpBar').style.width = "0%"
+            continue
+        hptext = f"HP {mon.cur_hp}/{mon.max_hp}"
+        document.getElementById(prefix+'HpText').innerText = hptext
+        pct = max(0, min(100, int(100*mon.cur_hp/mon.max_hp)))
+        bar = document.getElementById(prefix+'HpBar')
+        bar.style.width = f"{pct}%"
+        # color threshold
+        if pct <= 25: bar.style.background = "#ef4444"
+        elif pct <= 50: bar.style.background = "#f59e0b"
+        else: bar.style.background = "#22c55e"
+
+def set_moves(mon:Pokemon):
+    btn_ids = ['move1','move2','move3','move4']
+    for i,bid in enumerate(btn_ids):
+        btn = document.getElementById(bid)
+        if mon and i < len(mon.moves):
+            btn.textContent = mon.moves[i]
+            btn.disabled = False
+        else:
+            btn.textContent = "—"
+            btn.disabled = True
+
+class State:
+    def __init__(self):
+        self.locked = False
+        self.user_mon = None
+        self.cpu_mon = None
+        self.battle = None
+state = State()
+
+async def init():
+    await db.load()
+    # Fill datalist
+    dl = document.getElementById('pokedex_list')
+    # sort names
+    names = sorted(db.poke.keys())
+    # clear
+    dl.innerHTML = ""
+    for n in names:
+        opt = document.createElement('option')
+        opt.value = n
+        dl.appendChild(opt)
+    document.getElementById('log').innerText = "Enter two Pokémon, click Lock In, then Begin Battle."
+    # bind events
+    document.getElementById('pokedexBtn').addEventListener('click', create_proxy(on_pokedex))
+    document.getElementById('lockBtn').addEventListener('click', create_proxy(on_lock))
+    document.getElementById('beginBtn').addEventListener('click', create_proxy(on_begin))
+    document.getElementById('restartBtn').addEventListener('click', create_proxy(on_restart))
+    document.getElementById('runBtn').addEventListener('click', create_proxy(on_run))
+    for i in range(4):
+        document.getElementById(f'move{i+1}').addEventListener('click', create_proxy(lambda e,i=i: on_move(i)))
+await init()
+
+def user_input_name():
+    return document.getElementById('userName').value.strip().lower()
+def cpu_input_name():
+    return document.getElementById('cpuName').value.strip().lower()
+
+def load_mon(name_lower)->Pokemon|None:
+    row = db.poke.get(name_lower)
+    if not row: return None
+    return Pokemon(row)
+
+def set_sprite(prefix, name):
+    img = document.getElementById(prefix+'Sprite')
+    path = sprite_path(name)
+    img.setAttribute('src', path)
+
+def on_pokedex(evt=None):
+    # show quick list in the log
+    names = ", ".join(sorted(db.poke.keys())[:60]) + ", ..."
+    document.getElementById('log').innerText = "Pokédex (first 60 shown):\n" + names
+
+def on_lock(evt=None):
+    u = user_input_name()
+    c = cpu_input_name()
+    if not u or not c or u not in db.poke or c not in db.poke:
+        document.getElementById('log').innerText = "Please enter valid Pokémon names (see Pokédex)."
+        return
+    state.user_mon = load_mon(u)
+    state.cpu_mon = load_mon(c)
+    # Set labels, sprites, HP
+    document.getElementById('userLabel').textContent = state.user_mon.name
+    document.getElementById('cpuLabel').textContent = state.cpu_mon.name
+    set_sprite('user', state.user_mon.name)
+    set_sprite('cpu', state.cpu_mon.name)
+    update_bars()
+    # Enable begin + run, disable name inputs
+    document.getElementById('beginBtn').disabled = False
+    document.getElementById('runBtn').disabled = False
+    document.getElementById('userName').disabled = True
+    document.getElementById('cpuName').disabled = True
+    document.getElementById('pokedexBtn').disabled = True
+    state.locked = True
+    # Moves visible but disabled until Begin
+    set_moves(state.user_mon)
+    for i in range(4): document.getElementById(f'move{i+1}').disabled = True
+    document.getElementById('log').innerText = "Locked in! Click Begin Battle."
+
+def on_begin(evt=None):
+    if not (state.locked and state.user_mon and state.cpu_mon):
+        return
+    state.battle = Battle(state.user_mon, state.cpu_mon)
+    # Determine first mover (speed)
+    first_user = state.user_mon.spe >= state.cpu_mon.spe
+    if first_user:
+        document.getElementById('log').innerText = f"{state.user_mon.name} is faster and will move first. Choose a move."
+        set_moves(state.user_mon)
+        for i in range(4): document.getElementById(f'move{i+1}').disabled = False
+    else:
+        document.getElementById('log').innerText = f"{state.cpu_mon.name} is faster and moves first..."
+        # CPU acts once immediately (random move among its moves)
+        cpu_idx = random.randint(0, max(0,len(state.cpu_mon.moves)-1))
+        mv = state.cpu_mon.moves[cpu_idx]
+        state.battle.use_move(state.cpu_mon, state.user_mon, mv)
+        check_end_or_enable_user()
+
+    document.getElementById('beginBtn').disabled = True
+    document.getElementById('restartBtn').disabled = False
+
+def check_end_or_enable_user():
+    if state.user_mon.cur_hp <= 0 or state.cpu_mon.cur_hp <= 0:
+        end_battle()
+        return
+    # enable user moves
+    for i in range(4): document.getElementById(f'move{i+1}').disabled = False
+
+def on_move(idx:int):
+    # user's turn
+    if not state.battle: 
+        return
+    if idx >= len(state.user_mon.moves): 
+        return
+    for i in range(4): document.getElementById(f'move{i+1}').disabled = True
+    mv = state.user_mon.moves[idx]
+    state.battle.use_move(state.user_mon, state.cpu_mon, mv)
+    if state.cpu_mon.cur_hp <= 0:
+        end_battle()
+        return
+    # CPU counterattack
+    cpu_idx = random.randint(0, max(0, len(state.cpu_mon.moves)-1))
+    cpu_mv = state.cpu_mon.moves[cpu_idx]
+    state.battle.use_move(state.cpu_mon, state.user_mon, cpu_mv)
+    if state.user_mon.cur_hp <= 0:
+        end_battle()
+    else:
+        check_end_or_enable_user()
+
+def end_battle():
+    win_txt = f"You win! {state.cpu_mon.name} fainted." if state.cpu_mon.cur_hp<=0 else f"You lost. {state.user_mon.name} fainted."
+    document.getElementById('log').innerText += "\n" + win_txt
+    # disable moves + run
+    for i in range(4): document.getElementById(f'move{i+1}').disabled = True
+    document.getElementById('runBtn').disabled = True
+
+def on_run(evt=None):
+    document.getElementById('log').innerText = "Got away safely!"
+    for i in range(4): document.getElementById(f'move{i+1}').disabled = True
+    document.getElementById('runBtn').disabled = True
+
+def on_restart(evt=None):
+    # reset everything
+    state.locked = False
+    state.user_mon = None
+    state.cpu_mon = None
+    state.battle = None
+    document.getElementById('userName').disabled = False
+    document.getElementById('cpuName').disabled = False
+    document.getElementById('pokedexBtn').disabled = False
+    document.getElementById('beginBtn').disabled = True
+    document.getElementById('runBtn').disabled = True
+    document.getElementById('restartBtn').disabled = True
+    document.getElementById('userLabel').textContent = "Your Pokémon"
+    document.getElementById('cpuLabel').textContent = "CPU Pokémon"
+    document.getElementById('userSprite').setAttribute('src','Sprites/white.gif')
+    document.getElementById('cpuSprite').setAttribute('src','Sprites/white.gif')
+    for i in range(4):
+        b = document.getElementById(f'move{i+1}')
+        b.textContent = "Move"
+        b.disabled = True
+    document.getElementById('log').innerText = "Enter two Pokémon, click Lock In, then Begin Battle."
+    update_bars()
+</py-script>
+
+</body>
+</html>
